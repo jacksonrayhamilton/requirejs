@@ -139,6 +139,18 @@ var requirejs, require, define;
         return document.getElementsByTagName('script');
     }
 
+    function getScript(contextName, moduleName) {
+        var script;
+        each(scripts(), function (scriptNode) {
+            if (scriptNode.getAttribute('data-requiremodule') === moduleName &&
+                    scriptNode.getAttribute('data-requirecontext') === contextName) {
+                script = scriptNode;
+                return true;
+            }
+        });
+        return script;
+    }
+
     function defaultOnError(err) {
         throw err;
     }
@@ -357,13 +369,10 @@ var requirejs, require, define;
 
         function removeScript(name) {
             if (isBrowser) {
-                each(scripts(), function (scriptNode) {
-                    if (scriptNode.getAttribute('data-requiremodule') === name &&
-                            scriptNode.getAttribute('data-requirecontext') === context.contextName) {
-                        scriptNode.parentNode.removeChild(scriptNode);
-                        return true;
-                    }
-                });
+                var scriptNode = getScript(context.contextName, name);
+                if (scriptNode) {
+                    scriptNode.parentNode.removeChild(scriptNode);
+                }
             }
         }
 
@@ -1866,6 +1875,10 @@ var requirejs, require, define;
      */
     req.onError = defaultOnError;
 
+    req.getNode = function (contextName, moduleName) {
+        return getScript(contextName, moduleName);
+    };
+
     /**
      * Creates the node for the load command. Only used in browser envs.
      */
@@ -1890,13 +1903,22 @@ var requirejs, require, define;
      */
     req.load = function (context, moduleName, url) {
         var config = (context && context.config) || {},
+            preexisting = false,
             node;
         if (isBrowser) {
             //In the browser so use a script tag
-            node = req.createNode(config, moduleName, url);
+            //An existing script implies the module is loading asynchronously
+            //(using <script src="..." async>). Perhaps the script was
+            //pre-generated as an optimization.
+            node = req.getNode(context.contextName, moduleName);
+            if (node) {
+                preexisting = true;
+            } else {
+                node = req.createNode(config, moduleName, url);
 
-            node.setAttribute('data-requirecontext', context.contextName);
-            node.setAttribute('data-requiremodule', moduleName);
+                node.setAttribute('data-requirecontext', context.contextName);
+                node.setAttribute('data-requiremodule', moduleName);
+            }
 
             //Set up load listener. Test attachEvent first because IE9 has
             //a subtle issue in its addEventListener and script onload firings
@@ -1939,25 +1961,28 @@ var requirejs, require, define;
                 node.addEventListener('load', context.onScriptLoad, false);
                 node.addEventListener('error', context.onScriptError, false);
             }
-            node.src = url;
 
-            //Calling onNodeCreated after all properties on the node have been
-            //set, but before it is placed in the DOM.
-            if (config.onNodeCreated) {
-                config.onNodeCreated(node, config, moduleName, url);
-            }
+            if (!preexisting) {
+                node.src = url;
 
-            //For some cache cases in IE 6-8, the script executes before the end
-            //of the appendChild execution, so to tie an anonymous define
-            //call to the module name (which is stored on the node), hold on
-            //to a reference to this node, but clear after the DOM insertion.
-            currentlyAddingScript = node;
-            if (baseElement) {
-                head.insertBefore(node, baseElement);
-            } else {
-                head.appendChild(node);
+                //Calling onNodeCreated after all properties on the node have been
+                //set, but before it is placed in the DOM.
+                if (config.onNodeCreated) {
+                    config.onNodeCreated(node, config, moduleName, url);
+                }
+
+                //For some cache cases in IE 6-8, the script executes before the end
+                //of the appendChild execution, so to tie an anonymous define
+                //call to the module name (which is stored on the node), hold on
+                //to a reference to this node, but clear after the DOM insertion.
+                currentlyAddingScript = node;
+                if (baseElement) {
+                    head.insertBefore(node, baseElement);
+                } else {
+                    head.appendChild(node);
+                }
+                currentlyAddingScript = null;
             }
-            currentlyAddingScript = null;
 
             return node;
         } else if (isWebWorker) {
